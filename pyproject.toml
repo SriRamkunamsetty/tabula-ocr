@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tabula-ocr"
+version = "1.0.0"
+description = "Schema-locked document extraction with evidence, confidence and abstention, served on AMD Instinct."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Mohan Sriram Kunamsetty" }]
+keywords = ["ocr", "vlm", "rocm", "amd", "mi300x", "document-ai"]
+classifiers = [
+  "Programming Language :: Python :: 3.12",
+  "Intended Audience :: Developers",
+  "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.7",
+  "pydantic-settings>=2.3",
+  "httpx>=0.27",
+  "structlog>=24.1",
+  "prometheus-client>=0.20",
+  "pillow>=10.3",
+  "rapidfuzz>=3.9",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2", "pytest-asyncio>=0.23", "pytest-cov>=5.0", "ruff>=0.5", "mypy>=1.10"]
+
+[project.scripts]
+tabula = "tabula_ocr.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tabula_ocr = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning:tabula_ocr.*"]
+
+[tool.coverage.run]
+source = ["tabula_ocr"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
+
+[tool.ruff]
+line-length = 96
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "ARG", "PTH", "RUF", "D"]
+ignore = ["D203", "D213", "D406", "D407", "ARG002"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "ARG", "SIM117", "RUF001", "S101", "SLF001", "B008"]
+"src/tabula_ocr/cli.py" = ["B008"]  # typer.Option in defaults is the documented API
+"scripts/*" = ["D102", "D103", "T201", "S101"]
+"benchmarks/*" = ["T201"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.12"
+packages = ["tabula_ocr"]
+strict = true
+warn_unreachable = true
+disallow_untyped_decorators = false
+plugins = []

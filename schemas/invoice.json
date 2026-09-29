@@ -1,0 +1,21 @@
+{
+  "name": "invoice",
+  "title": "commercial invoice",
+  "fields": [
+    {"name": "invoice_number", "type": "string", "required": true,
+     "description": "The invoice's own reference number, not a PO or GSTIN.",
+     "examples": ["INV-2026-0041"]},
+    {"name": "invoice_date", "type": "date", "required": true,
+     "description": "Date the invoice was issued."},
+    {"name": "supplier_name", "type": "string", "required": true,
+     "description": "Legal name of the party issuing the invoice."},
+    {"name": "supplier_phone", "type": "phone",
+     "description": "Contact telephone number printed for the supplier."},
+    {"name": "total_amount", "type": "currency", "required": true,
+     "description": "Grand total payable, including tax."},
+    {"name": "currency", "type": "string",
+     "description": "Currency code or symbol the total is denominated in."},
+    {"name": "purchase_order", "type": "string",
+     "description": "Buyer's purchase order reference, if printed."}
+  ]
+}

@@ -1,0 +1,70 @@
+# Local / single-node deployment: the API service plus the vLLM server it
+# depends on, both on one AMD Instinct MI300X host.
+#
+#   docker compose --profile gpu up          # full stack, needs ROCm + one MI300X
+#   docker compose up api                    # API only, point TABULA_VLM_BASE_URL
+#                                             # at an existing vLLM endpoint instead
+#
+# The `vlm` service is what "serving a multimodal model" (mini-challenge 2)
+# means in production: PaddleOCR-VL behind an OpenAI-compatible endpoint,
+# using AMD's published ROCm vLLM image, with guided decoding enabled so the
+# JSON-Schema contract in schema_registry.py is enforced by the decoder.
+
+services:
+  vlm:
+    image: rocm/vllm:latest
+    profiles: ["gpu"]
+    command: >
+      --model ${TABULA_VLM_MODEL:-PaddlePaddle/PaddleOCR-VL}
+      --host 0.0.0.0 --port 8000
+      --max-model-len 8192
+      --gpu-memory-utilization 0.90
+      --guided-decoding-backend xgrammar
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+    ipc: host
+    shm_size: "16gb"
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 120s  # model weights load cold
+
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      TABULA_VLM_BASE_URL: "http://vlm:8000/v1"
+      TABULA_VLM_MODEL: "${TABULA_VLM_MODEL:-PaddlePaddle/PaddleOCR-VL}"
+      TABULA_PASSES: "${TABULA_PASSES:-2}"
+      TABULA_ABSTAIN_BELOW: "${TABULA_ABSTAIN_BELOW:-0.62}"
+      TABULA_GPU_HOURLY_RATE_USD: "${TABULA_GPU_HOURLY_RATE_USD:-1.99}"
+      TABULA_LOG_LEVEL: "${TABULA_LOG_LEVEL:-INFO}"
+    depends_on:
+      vlm:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["observability"]
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
