@@ -138,7 +138,7 @@ async def main() -> None:
     print(table)
 
     out = REPO_ROOT / "docs" / "prompt_ablation.md"
-    out.write_text(_render_report(table))
+    out.write_text(_render_report(table), encoding="utf-8")
     print(f"\nwrote {out}")
 
 
