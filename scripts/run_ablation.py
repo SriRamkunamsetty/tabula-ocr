@@ -93,8 +93,11 @@ class GoldenSetScriptedVLM(ScriptedVLM):
             self.calls.append(dict(kwargs) | {"_synthetic": "transcribe"})
             text = _reference_text(case)
             return VLMResponse(
-                text=text, prompt_tokens=280, completion_tokens=60,
-                model="scripted-golden-set", latency_ms=4.0,
+                text=text,
+                prompt_tokens=280,
+                completion_tokens=60,
+                model="scripted-golden-set",
+                latency_ms=4.0,
             )
 
         self._scripts = _scripts_for(case, self._passes)
@@ -128,9 +131,11 @@ async def main() -> None:
         # that config's pass count — see the module docstring for why this
         # matters.
         single = await run_suite(
-            cases, settings,
+            cases,
+            settings,
             lambda passes=config.passes: GoldenSetScriptedVLM(cases, passes),
-            [config], registry,
+            [config],
+            registry,
         )
         reports.extend(single)
 

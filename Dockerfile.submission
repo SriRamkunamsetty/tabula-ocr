@@ -1,0 +1,70 @@
+# syntax=docker/dockerfile:1.7
+#
+# The image submitted to Mini-Challenge 2. (The plain `Dockerfile` in this repo packages the
+# FastAPI service and is NOT what the grader runs.)
+#
+#   docker build -f Dockerfile.submission -t <registry>/tabula-ocr:<tag> .
+#   bash scripts/check_submission.sh <registry>/tabula-ocr:<tag>
+#
+# Hard gates this file is built around (from the published challenge document):
+#   * the FINAL stage is FROM the mandated ROCm base, checked by layer identity: never squash
+#   * image <= 60 GiB uncompressed (model weights are baked in and count against it)
+#   * code at /app/app.py; the harness execs into the RUNNING container once per image, so the
+#     entrypoint loads the model once and never exits
+#   * peak VRAM within 1-48 GiB: the model server is given a GiB budget, not a card fraction
+#   * pip must never replace the base image's ROCm torch with a CUDA build (see PIP_CONSTRAINT)
+#   * no secrets in the image (nothing is copied except src/ and pyproject/README)
+ARG BASE_IMAGE=rocm/pytorch:rocm10.0_ubuntu26.04_py3.14_pytorch_release_2.13.0
+FROM ${BASE_IMAGE}
+
+ARG INSTALL_VLLM=1
+ARG VLLM_SPEC="vllm"
+ARG PIP_EXTRA_ARGS=""
+ARG BAKE_MODEL=1
+# One vision-language model reads every image.
+ARG MODEL_ID=Qwen/Qwen2.5-VL-7B-Instruct
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    TABULA_OCR_ENVIRONMENT=prod \
+    TABULA_OCR_LOG_FORMAT=json \
+    TABULA_OCR_SERVE_MODEL=/models/vlm \
+    TABULA_OCR_LLM_MODEL=tabula-vlm \
+    TABULA_OCR_LLM_BASE_URL=http://127.0.0.1:8000/v1 \
+    TABULA_OCR_VRAM_BUDGET_GIB=36 \
+    TABULA_OCR_INDEX_DIR=/app/index \
+    TABULA_OCR_OUTPUT_DIR=/app/output
+
+WORKDIR /app
+
+# The base image ships a ROCm build of torch. Installing almost any torch-dependent package can
+# make pip silently replace it with a CUDA build, which then fails at runtime with errors that
+# never mention torch (the challenge document measured exactly this). Pin the torch stack so pip
+# refuses -- loudly, at build time -- instead of replacing it.
+RUN python3 -m pip freeze | grep -iE '^(torch|torchvision|torchaudio|triton|pytorch-triton-rocm)==' > /etc/torch-constraints.txt; \
+    cat /etc/torch-constraints.txt
+ENV PIP_CONSTRAINT=/etc/torch-constraints.txt
+
+COPY pyproject.toml README.md /opt/src/tabula-ocr/
+COPY src /opt/src/tabula-ocr/src
+RUN python3 -m pip install "/opt/src/tabula-ocr" huggingface_hub \
+ && if [ "$INSTALL_VLLM" = "1" ]; then python3 -m pip install $PIP_EXTRA_ARGS "$VLLM_SPEC" || echo "WARN: vLLM install failed; the model server will not start"; fi
+
+# Weights are baked in so start-up never depends on a multi-GB download inside the 10-minute budget.
+RUN if [ "$BAKE_MODEL" = "1" ]; then \
+      python3 -c "from huggingface_hub import snapshot_download as s; s('${MODEL_ID}', local_dir='/models/vlm', allow_patterns=['*.json','*.safetensors','*.txt','*.model','*.tiktoken','merges.txt','vocab.*'])"; \
+    else mkdir -p /models/vlm; fi
+
+COPY app.py /app/app.py
+RUN mkdir -p /app/input /app/output
+
+# Fail the build if anything above swapped the ROCm torch for a CUDA build.
+RUN python3 -c "import sys, torch; print('torch', torch.__version__, 'hip', torch.version.hip); sys.exit(0 if torch.version.hip else 1)"
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=600s CMD test -f /tmp/tabula_ready || exit 1
+
+# Loads the model during the start-up budget, then stays alive; the harness runs
+# `python3 /app/app.py --input-image /app/input/image_NN.<ext>` once per image.
+ENTRYPOINT ["python3", "-m", "tabula_ocr.contract.serve"]

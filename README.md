@@ -27,6 +27,58 @@ in eight seconds on a laptop.
 
 ---
 
+## Two entry points
+
+| | **Service** (`tabula`, FastAPI) | **Contract mode** (`app.py`) |
+|---|---|---|
+| for | people and dashboards | the Mini-Challenge 2 grader |
+| input | a document page and a schema | one PNG, JPEG or TIFF (plates and road signs) |
+| output | typed fields with evidence, confidence, abstention | `{"text": "7ABC123", "confidence": 0.94}` |
+| unsure | abstains (`HOLD`) | never abstains: the grader scores a blank exactly like a wrong guess |
+| runs as | a long-lived API | one process per image, inside an already-running container |
+
+Contract mode is a thin, separate subpackage (`src/tabula_ocr/contract/`); the service is untouched.
+The reasoning is in [`docs/adr/005-contract-mode.md`](docs/adr/005-contract-mode.md).
+
+```bash
+python3 app.py --input-image /app/input/image_01.png
+# -> /app/output/image_01_output.json  {"text": "7ABC123", "confidence": 0.94}
+```
+
+What it does that a generic "send the image to a VLM" script would not:
+
+* **Reads one picture four ways and votes.** The original, a contrast-stretched view, a denoised view and an
+  equalised greyscale view go to the same vision model concurrently; votes are counted on the grader's own
+  normalisation, the untouched view breaks ties, and when nothing wins outright equal-length readings are
+  voted character by character (different renderings misread different characters).
+* **Applies the transcription rules in code, not in a prompt.** The printed jurisdiction banner and slogan
+  (`CALIFORNIA`, `THE LONE STAR STATE`) are dropped from a US plate; a Chinese plate's province character
+  and letter are *kept*, and because `O` and `I` never occur on those plates, they are repaired to `0`/`1`.
+  Multi-line text is joined top to bottom with single spaces.
+* **Accepts any image the grader can send.** First frame of a multi-frame TIFF, EXIF-rotated JPEGs, palette,
+  16-bit, CMYK and transparent images, images far above the model's resolution (downscaled) and tiny crops
+  (upscaled).
+* **Always leaves a valid file.** A placeholder is written first and rewritten after every view completes,
+  so a crash, a watchdog exit or a dead model still leaves a parseable answer (the best so far).
+
+```bash
+python scripts/contract_selfcheck.py            # replays the grader's process model; scripted model, no GPU
+python scripts/contract_selfcheck.py --live \   # against your real model, with the organisers' kit
+    --images mc2-starter-kit/images --expected mc2-starter-kit/expected.json
+docker build -f Dockerfile.submission -t <registry>/tabula-ocr:v1 .
+bash scripts/check_submission.sh <registry>/tabula-ocr:v1 <images_dir> [expected.json]
+```
+
+**What is and is not verified.** The contract path has 80+ tests and the self-check scores 200/200 on ten
+synthetic images covering every format and awkward case the grader promises (PNG, JPEG, TIFF; huge, tiny,
+transparent, palette, 16-bit, rotated, multi-frame), each run as a real subprocess against a real HTTP model
+server. That model is **scripted**: it proves image handling, composition, voting, timing and the file
+contract, not how well a real vision-language model reads characters. The submission image is untested on real
+ROCm hardware (vLLM availability for the mandated base image is the main unknown), and the sample images the
+organisers publish have not been run through it.
+
+---
+
 ## Why this exists
 
 A vision-language model asked to extract fields from a document will almost
@@ -146,7 +198,7 @@ pip install -e ".[dev]"
 # deliberately hallucinates one field, and shows it being caught:
 tabula demo
 
-# Full test suite (70 tests) + strict types + lint
+# Full test suite (150+ tests) + strict types + lint
 pytest -q
 mypy
 ruff check .

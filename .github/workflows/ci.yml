@@ -31,10 +31,10 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Ruff (lint)
-        run: ruff check src tests
+        run: ruff check src tests scripts app.py
 
       - name: Ruff (format check)
-        run: ruff format --check src tests
+        run: ruff format --check src tests scripts app.py
 
       - name: mypy (strict)
         run: mypy
@@ -53,6 +53,9 @@ jobs:
         run: |
           TABULA_SCHEMA_DIR=schemas python -m tabula_ocr.cli demo | tee demo.out
           grep -q "HOLD" demo.out   # the abstention path must actually fire
+
+      - name: Contract-mode self-check (real subprocesses, real HTTP, scripted model)
+        run: python scripts/contract_selfcheck.py   # exits non-zero unless it scores full marks in time
 
   harness-benchmark:
     name: pipeline overhead benchmark (no GPU)
@@ -74,6 +77,16 @@ jobs:
           name: benchmark-results
           path: benchmarks/results.json
           retention-days: 30
+
+  submission-dockerfile-lint:
+    name: lint the submission Dockerfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.submission
+          failure-threshold: error
 
   docker-build:
     name: build container image
